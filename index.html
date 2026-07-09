@@ -1,0 +1,1592 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Dinozor: Ay Operasyonu</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+            background-color: #0f172a;
+        }
+        canvas {
+            image-rendering: pixelated;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(0, 0, 0, 0.7);
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen text-slate-100 font-mono overflow-hidden p-2">
+
+    <!-- Ana Panel -->
+    <div class="w-full max-w-4xl flex flex-col items-center">
+        <!-- Başlık & Gösterge Paneli -->
+        <div class="w-full flex justify-between items-center mb-2 px-4">
+            <div class="flex items-center gap-3">
+                <span class="text-xs bg-red-600 text-white font-bold px-2 py-1 rounded animate-pulse">AY OPERASYONU</span>
+                <h1 class="text-xl md:text-2xl font-black text-amber-400 tracking-wider">DİNO: AY OPERASYONU</h1>
+            </div>
+            <!-- Ses Kontrolü -->
+            <button id="mute-btn" class="bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded text-sm flex items-center gap-2 border border-slate-700 transition-colors">
+                <span id="mute-icon">🔊</span> <span id="mute-text" class="hidden sm:inline">Sesi Kapat</span>
+            </button>
+        </div>
+
+        <!-- Oyun Alanı Container -->
+        <div class="relative w-full aspect-[4/3] bg-black rounded-xl overflow-hidden border-4 border-slate-700">
+            <canvas id="gameCanvas" width="800" height="600" class="w-full h-full block"></canvas>
+            
+            <!-- Akıllı Dokunmatik Kontroller (Gerektiğinde Dinamik Olarak Görünecek) -->
+            <div id="mobile-dpad" class="absolute bottom-4 left-4 right-4 flex justify-between items-center opacity-85 pointer-events-none hidden">
+                <div class="flex gap-3 pointer-events-auto">
+                    <button id="btn-left" class="w-16 h-16 bg-slate-800/90 active:bg-slate-600 border-2 border-slate-500 rounded-full text-white text-2xl flex items-center justify-center select-none active:scale-95 transition-transform">◀</button>
+                    <button id="btn-right" class="w-16 h-16 bg-slate-800/90 active:bg-slate-600 border-2 border-slate-500 rounded-full text-white text-2xl flex items-center justify-center select-none active:scale-95 transition-transform">▶</button>
+                </div>
+                <div class="flex pointer-events-auto">
+                    <button id="btn-action" class="w-20 h-20 bg-amber-600/90 active:bg-amber-500 border-2 border-amber-400 rounded-full text-white text-sm font-black flex items-center justify-center shadow-lg select-none active:scale-95 transition-transform">ATEŞ 🚀</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alt Kılavuz -->
+        <div class="w-full mt-3 text-center text-xs text-slate-400 max-w-lg px-2">
+            <p class="hidden md:block">💻 <span class="text-amber-400 font-bold">PC Kontrolleri:</span> Zıplamak / Ateş etmek için <span class="bg-slate-800 text-white px-1.5 py-0.5 rounded">Sol Tık</span> veya <span class="bg-slate-800 text-white px-1.5 py-0.5 rounded">Boşluk</span>. Sağa sola hareket için fareyi oynatın.</p>
+            <p class="md:hidden">📱 <span class="text-amber-400 font-bold">Mobil Kontroller:</span> Zıplamak, bulmaca çözmek ve seçimler için ekrana dokunun. Savaş aşamalarında yön okları otomatik açılır.</p>
+        </div>
+    </div>
+
+    <script>
+        // --- WEB AUDIO API SES MOTORU ---
+        class SoundEngine {
+            constructor() {
+                this.ctx = null;
+                this.muted = false;
+                this.musicInterval = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+
+            playJump() {
+                if (this.muted) return;
+                this.init();
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(600, this.ctx.currentTime + 0.15);
+
+                gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.15);
+            }
+
+            playLaser() {
+                if (this.muted) return;
+                this.init();
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(900, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.12);
+
+                gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.12);
+
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.12);
+            }
+
+            playExplosion() {
+                if (this.muted) return;
+                this.init();
+                const bufferSize = this.ctx.sampleRate * 0.3;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(1000, this.ctx.currentTime);
+                filter.frequency.exponentialRampToValueAtTime(10, this.ctx.currentTime + 0.25);
+
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.ctx.destination);
+
+                noise.start();
+                noise.stop(this.ctx.currentTime + 0.3);
+            }
+
+            playGameOver() {
+                if (this.muted) return;
+                this.init();
+                const notes = [300, 240, 180, 120];
+                notes.forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime + idx * 0.15);
+                    gain.gain.setValueAtTime(0.15, this.ctx.currentTime + idx * 0.15);
+                    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + idx * 0.15 + 0.14);
+                    osc.start(this.ctx.currentTime + idx * 0.15);
+                    osc.stop(this.ctx.currentTime + idx * 0.15 + 0.15);
+                });
+            }
+
+            startMusic() {
+                this.stopMusic();
+                if (this.muted) return;
+                this.init();
+                
+                let beat = 0;
+                const notes = [110, 110, 130, 110, 147, 130, 110, 165];
+                
+                this.musicInterval = setInterval(() => {
+                    if (this.muted || !this.ctx) return;
+                    
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    
+                    osc.type = 'triangle';
+                    const currentNote = notes[beat % notes.length];
+                    osc.frequency.setValueAtTime(currentNote, this.ctx.currentTime);
+                    
+                    gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.25);
+                    
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + 0.3);
+                    beat++;
+                }, 300);
+            }
+
+            stopMusic() {
+                if (this.musicInterval) {
+                    clearInterval(this.musicInterval);
+                    this.musicInterval = null;
+                }
+            }
+        }
+
+        const snd = new SoundEngine();
+
+        // Mute / Unmute Butonu Ayarı
+        const muteBtn = document.getElementById('mute-btn');
+        const muteIcon = document.getElementById('mute-icon');
+        const muteText = document.getElementById('mute-text');
+        
+        muteBtn.addEventListener('click', () => {
+            snd.muted = !snd.muted;
+            if (snd.muted) {
+                muteIcon.innerText = "🔇";
+                muteText.innerText = "Sesi Aç";
+                snd.stopMusic();
+            } else {
+                muteIcon.innerText = "🔊";
+                muteText.innerText = "Sesi Kapat";
+                snd.init();
+                snd.startMusic();
+            }
+        });
+
+        // --- OYUN KONFİGÜRASYONLARI VE SABİTLER ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Renkler
+        const COLOR_BG = "#f7f7f7";
+        const COLOR_DARK_BG = "#1e1e28";
+        const COLOR_MARS_BG = "#78281e";
+        const COLOR_SPACE_BG = "#0a0a19";
+        const COLOR_MOON_BG = "#282c34";
+        const COLOR_MOON_GROUND = "#787c85";
+        const COLOR_TEXT = "#535353";
+        const COLOR_WHITE = "#ffffff";
+        const COLOR_GREEN = "#2ecc71";
+        const COLOR_RED = "#e74c3c";
+        const COLOR_BLUE = "#3498db";
+        const COLOR_YELLOW = "#f1c40f";
+        const COLOR_ORANGE = "#e67e22";
+        const COLOR_GRAY = "#c8c8c8";
+        const COLOR_DARK_GRAY = "#646464";
+        const COLOR_BLACK = "#0a0a0c";
+
+        // Oyun Durumları
+        const STATE_MENU = 0;
+        const STATE_CLASSIC = 1;
+        const STATE_WIFI_BOMB = 2;
+        const STATE_PUZZLE = 3;
+        const STATE_HELICOPTER = 4;
+        const STATE_MARS_TRAVEL = 5;
+        const STATE_MARS_BATTLE = 6;
+        const STATE_MARS_KING = 7;
+        const STATE_MOON_SURFACE = 8;
+        const STATE_VICTORY = 9;
+        const STATE_GAME_OVER = 10;
+
+        // Kontroller
+        const keys = {};
+        let mouseX = 0;
+        let mouseY = 0;
+        let isTouchDevice = false;
+
+        class EnergyNode {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.width = 40;
+                this.height = 40;
+                this.color = color;
+                this.isActive = false;
+            }
+            get rect() {
+                return { x: this.x, y: this.y, width: this.width, height: this.height };
+            }
+        }
+
+        // --- ANA OYUN SINIFI ---
+        class Game {
+            constructor() {
+                this.state = STATE_MENU;
+                this.timeLimit = 600 * 1000;
+                this.startTicks = Date.now();
+                this.timeRemaining = this.timeLimit;
+                
+                this.classicPassedCount = 0;
+                this.neededClassicJumps = 10;
+                this.bombsDodged = 0;
+                this.neededBombDodges = 15;
+                
+                this.isPaused = false;
+                this.pauseIconRect = { x: 800 - 60, y: 20, width: 30, height: 30 };
+                this.resumeBtnRect = { x: 300, y: 270, width: 200, height: 60 };
+                
+                this.mobileLeftPressed = false;
+                this.mobileRightPressed = false;
+
+                this.resetGameStates();
+            }
+
+            resetGameStates() {
+                this.startTicks = Date.now();
+                this.timeRemaining = this.timeLimit;
+                this.classicPassedCount = 0;
+                this.bombsDodged = 0;
+                this.isPaused = false;
+
+                this.dinoX = 100;
+                this.dinoY = 350;
+                this.dinoVelY = 0;
+                this.isJumping = false;
+                this.gravity = 0.8;
+                this.jumpStrength = -15;
+                this.dinoWidth = 44;
+                this.dinoHeight = 44;
+                this.dinoFrame = 0;
+                this.dinoFrameTimer = 0;
+                this.dinoSpeed = 7;
+
+                this.cacti = [];
+                this.cactusSpawnTimer = 0;
+                this.gameSpeed = 7;
+
+                this.bombs = [];
+                this.bombSpawnTimer = 0;
+                this.pulseCounter = 0;
+
+                this.spaceshipX = 800 + 100;
+                this.spaceshipY = 300;
+                this.spaceshipHover = 0;
+                this.spaceshipReady = false;
+
+                this.heliX = 800 + 100;
+                this.heliY = 150;
+                this.heliFrame = 0;
+                this.dinoFallingFromShip = false;
+
+                this.marsTravelDistance = 0;
+                this.neededMarsDistance = 300;
+                this.spaceObstacles = [];
+
+                this.martians = [];
+                this.martiansDefeated = 0;
+                this.neededMartianKills = 10;
+                this.projectiles = [];
+
+                this.crawlers = [];
+                this.crawlersDefeated = 0;
+                this.neededCrawlerKills = 15;
+                this.marsAlliesY = 440;
+
+                this.puzzleNodes = [
+                    new EnergyNode(150, 150, COLOR_RED),
+                    new EnergyNode(150, 300, COLOR_BLUE),
+                    new EnergyNode(150, 450, COLOR_YELLOW),
+                    new EnergyNode(550, 150, COLOR_RED),
+                    new EnergyNode(550, 300, COLOR_BLUE),
+                    new EnergyNode(550, 450, COLOR_YELLOW)
+                ];
+                this.selectedNode = null;
+                this.connections = [];
+            }
+
+            triggerGameOver() {
+                this.state = STATE_GAME_OVER;
+                snd.stopMusic();
+                snd.playGameOver();
+            }
+
+            updateTimer() {
+                const activeStates = [
+                    STATE_CLASSIC, STATE_WIFI_BOMB, STATE_PUZZLE, 
+                    STATE_HELICOPTER, STATE_MARS_TRAVEL, STATE_MARS_BATTLE, 
+                    STATE_MOON_SURFACE
+                ];
+                if (activeStates.includes(this.state) && !this.isPaused) {
+                    const passedTime = Date.now() - this.startTicks;
+                    this.timeRemaining = Math.max(0, this.timeLimit - passedTime);
+                    if (this.timeRemaining <= 0) {
+                        this.triggerGameOver();
+                    }
+                }
+            }
+
+            // --- AKILLI MOBİL DPAD YÖNETİMİ ---
+            updateMobileControlsVisibility() {
+                const dpadContainer = document.getElementById('mobile-dpad');
+                const actionBtn = document.getElementById('btn-action');
+                const leftBtn = document.getElementById('btn-left');
+                const rightBtn = document.getElementById('btn-right');
+
+                if (!isTouchDevice) {
+                    dpadContainer.classList.add('hidden');
+                    return;
+                }
+
+                // Hangi aşamalarda sol/sağ (veya yukarı/aşağı) yön okları lazım?
+                const needsNavigation = [STATE_WIFI_BOMB, STATE_MARS_TRAVEL, STATE_MARS_BATTLE, STATE_MOON_SURFACE].includes(this.state);
+                // Hangi aşamalarda ateş etme (Aksiyon) butonu lazım?
+                const needsAction = [STATE_MARS_BATTLE, STATE_MOON_SURFACE].includes(this.state);
+
+                if (needsNavigation || needsAction) {
+                    dpadContainer.classList.remove('hidden');
+                    
+                    // Yön butonları görünürlüğü ve etiket güncellemesi
+                    if (needsNavigation) {
+                        leftBtn.classList.remove('invisible');
+                        rightBtn.classList.remove('invisible');
+                        
+                        // Mars yolculuğunda dikey uçuş olduğu için butonları Yukarı/Aşağı simgelerine çeviriyoruz
+                        if (this.state === STATE_MARS_TRAVEL) {
+                            leftBtn.innerText = "▲";
+                            rightBtn.innerText = "▼";
+                        } else {
+                            leftBtn.innerText = "◀";
+                            rightBtn.innerText = "▶";
+                        }
+                    } else {
+                        leftBtn.classList.add('invisible');
+                        rightBtn.classList.add('invisible');
+                    }
+
+                    // Aksiyon butonu görünürlüğü
+                    if (needsAction) {
+                        actionBtn.classList.remove('invisible');
+                    } else {
+                        actionBtn.classList.add('invisible');
+                    }
+                } else {
+                    // Diğer durumlarda (Menü, Klasik Dino, Bulmaca vb.) tüm paneli gizle
+                    dpadContainer.classList.add('hidden');
+                }
+            }
+
+            // --- PROSEDÜREL GÖRSEL ÇİZİMLER ---
+            drawDino(x, y, frame = 0, isJumping = false) {
+                let eraseColor = COLOR_BG;
+                if (this.state === STATE_PUZZLE) eraseColor = COLOR_DARK_BG;
+                else if (this.state === STATE_MARS_TRAVEL) eraseColor = COLOR_SPACE_BG;
+                else if (this.state === STATE_MARS_BATTLE || this.state === STATE_MARS_KING) eraseColor = COLOR_MARS_BG;
+                else if (this.state === STATE_MOON_SURFACE) eraseColor = COLOR_MOON_BG;
+
+                ctx.fillStyle = COLOR_TEXT;
+                ctx.fillRect(x + 20, y, 24, 16);
+                
+                ctx.fillStyle = eraseColor;
+                ctx.fillRect(x + 24, y + 4, 4, 4);
+                
+                ctx.fillStyle = COLOR_TEXT;
+                ctx.fillRect(x + 16, y + 12, 16, 12);
+                ctx.fillRect(x + 4, y + 20, 32, 16);
+                ctx.fillRect(x, y + 24, 8, 8);
+                ctx.fillRect(x + 32, y + 22, 6, 4);
+
+                if (isJumping) {
+                    ctx.fillRect(x + 10, y + 36, 6, 6);
+                    ctx.fillRect(x + 24, y + 36, 6, 6);
+                } else {
+                    if (frame === 0) {
+                        ctx.fillRect(x + 10, y + 36, 6, 8);
+                        ctx.fillRect(x + 24, y + 36, 6, 4);
+                    } else {
+                        ctx.fillRect(x + 10, y + 36, 6, 4);
+                        ctx.fillRect(x + 24, y + 36, 6, 8);
+                    }
+                }
+            }
+
+            drawCactus(x, y) {
+                ctx.fillStyle = COLOR_TEXT;
+                ctx.fillRect(x + 10, y, 8, 40);
+                ctx.fillRect(x, y + 12, 10, 6);
+                ctx.fillRect(x, y + 6, 6, 10);
+                ctx.fillRect(x + 18, y + 18, 10, 6);
+                ctx.fillRect(x + 22, y + 10, 6, 12);
+            }
+
+            drawWifiBomb(x, y, pulse = 0) {
+                ctx.beginPath();
+                ctx.arc(x + 15, y + 15, 12, 0, Math.PI * 2);
+                ctx.fillStyle = COLOR_RED;
+                ctx.fill();
+
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = COLOR_ORANGE;
+                ctx.beginPath();
+                ctx.moveTo(x + 15, y + 3);
+                ctx.lineTo(x + 15, y - 5);
+                ctx.stroke();
+
+                if (pulse % 20 < 10) {
+                    ctx.beginPath();
+                    ctx.arc(x + 15, y - 7, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = COLOR_YELLOW;
+                    ctx.fill();
+                }
+
+                ctx.beginPath();
+                ctx.arc(x + 15, y + 15, 2, 0, Math.PI * 2);
+                ctx.fillStyle = COLOR_WHITE;
+                ctx.fill();
+
+                ctx.strokeStyle = COLOR_WHITE;
+                ctx.lineWidth = 2;
+                
+                ctx.beginPath();
+                ctx.arc(x + 15, y + 15, 6, -Math.PI*0.75, -Math.PI*0.25);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(x + 15, y + 15, 10, -Math.PI*0.75, -Math.PI*0.25);
+                ctx.stroke();
+            }
+
+            drawSpaceship(x, y, hover = 0) {
+                const hoverOffset = Math.sin(hover * 0.1) * 5;
+                const ny = y + hoverOffset;
+
+                ctx.beginPath();
+                ctx.ellipse(x + 30, ny + 10, 15, 10, 0, 0, Math.PI * 2);
+                ctx.fillStyle = COLOR_BLUE;
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.ellipse(x + 30, ny + 20, 30, 10, 0, 0, Math.PI * 2);
+                ctx.fillStyle = COLOR_GREEN;
+                ctx.fill();
+
+                ctx.fillStyle = COLOR_YELLOW;
+                ctx.beginPath();
+                ctx.arc(x + 10, ny + 20, 3, 0, Math.PI * 2);
+                ctx.arc(x + 30, ny + 22, 3, 0, Math.PI * 2);
+                ctx.arc(x + 50, ny + 20, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            drawHelicopter(x, y, frame = 0) {
+                const rotorOffset = (frame % 2) * 20;
+
+                ctx.strokeStyle = COLOR_DARK_GRAY;
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(x - 20 + rotorOffset, y - 15);
+                ctx.lineTo(x + 60 - rotorOffset, y - 15);
+                ctx.stroke();
+
+                ctx.strokeStyle = COLOR_TEXT;
+                ctx.beginPath();
+                ctx.moveTo(x + 20, y - 15);
+                ctx.lineTo(x + 20, y);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.ellipse(x + 25, y + 15, 25, 15, 0, 0, Math.PI * 2);
+                ctx.fillStyle = COLOR_ORANGE;
+                ctx.fill();
+
+                ctx.strokeStyle = COLOR_BLUE;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(x + 35, y + 12, 10, 0, Math.PI / 2);
+                ctx.stroke();
+
+                ctx.strokeStyle = COLOR_ORANGE;
+                ctx.lineWidth = 6;
+                ctx.beginPath();
+                ctx.moveTo(x, y + 15);
+                ctx.lineTo(x - 30, y + 5);
+                ctx.stroke();
+
+                ctx.fillStyle = COLOR_RED;
+                ctx.fillRect(x - 35, y, 8, 15);
+
+                ctx.strokeStyle = COLOR_TEXT;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(x + 5, y + 30);
+                ctx.lineTo(x + 10, y + 38);
+                ctx.moveTo(x + 35, y + 30);
+                ctx.lineTo(x + 40, y + 38);
+                ctx.stroke();
+
+                ctx.strokeStyle = COLOR_TEXT;
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(x - 5, y + 38);
+                ctx.lineTo(x + 50, y + 38);
+                ctx.stroke();
+            }
+
+            drawMartian(x, y, frame = 0) {
+                const bounce = Math.sin(frame * 0.15) * 4;
+
+                ctx.beginPath();
+                ctx.arc(x + 20, y + 15 + bounce, 12, 0, Math.PI * 2);
+                ctx.fillStyle = COLOR_GREEN;
+                ctx.fill();
+
+                ctx.strokeStyle = COLOR_GREEN;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(x + 15, y + 5 + bounce);
+                ctx.lineTo(x + 10, y - 5 + bounce);
+                ctx.moveTo(x + 25, y + 5 + bounce);
+                ctx.lineTo(x + 30, y - 5 + bounce);
+                ctx.stroke();
+
+                ctx.fillStyle = COLOR_YELLOW;
+                ctx.beginPath();
+                ctx.arc(x + 10, y - 5 + bounce, 3, 0, Math.PI * 2);
+                ctx.arc(x + 30, y - 5 + bounce, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = COLOR_RED;
+                ctx.beginPath();
+                ctx.arc(x + 15, y + 12 + bounce, 3, 0, Math.PI * 2);
+                ctx.arc(x + 25, y + 12 + bounce, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = COLOR_GREEN;
+                ctx.beginPath();
+                ctx.roundRect(x + 10, y + 27 + bounce, 20, 15, 4);
+                ctx.fill();
+
+                ctx.strokeStyle = COLOR_GREEN;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(x + 13, y + 42 + bounce);
+                ctx.lineTo(x + 8, y + 52 + bounce);
+                ctx.moveTo(x + 27, y + 42 + bounce);
+                ctx.lineTo(x + 32, y + 52 + bounce);
+                ctx.stroke();
+            }
+
+            drawCreepyCrawler(x, y, frame = 0) {
+                const wave = Math.sin(frame * 0.3) * 6;
+
+                ctx.fillStyle = COLOR_BLACK;
+                ctx.beginPath();
+                ctx.ellipse(x + 12, y + 27 + wave, 12, 7, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.ellipse(x + 28, y + 28 - wave, 10, 6, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.ellipse(x + 39, y + 29 + wave, 7, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = COLOR_RED;
+                ctx.beginPath();
+                ctx.arc(x + 5, y + 24 + wave, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = COLOR_BLACK;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(x + 10, y + 30 + wave);
+                ctx.lineTo(x + 5, y + 38 + wave);
+                ctx.moveTo(x + 22, y + 32 - wave);
+                ctx.lineTo(x + 25, y + 40 - wave);
+                ctx.stroke();
+            }
+
+            drawCrown(x, y) {
+                ctx.fillStyle = COLOR_YELLOW;
+                ctx.beginPath();
+                ctx.moveTo(x, y + 15);
+                ctx.lineTo(x + 5, y);
+                ctx.lineTo(x + 15, y + 10);
+                ctx.lineTo(x + 25, y);
+                ctx.lineTo(x + 35, y + 10);
+                ctx.lineTo(x + 45, y);
+                ctx.lineTo(x + 50, y + 15);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.fillStyle = COLOR_ORANGE;
+                ctx.fillRect(x, y + 15, 50, 6);
+            }
+
+            // --- HUD ---
+            drawHUD() {
+                const seconds = Math.floor((this.timeRemaining / 1000) % 60);
+                const minutes = Math.floor((this.timeRemaining / (1000 * 60)) % 60);
+                const timeStr = `SÜRE: ${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                
+                const currentBG = this.getBGColor();
+                let textColor = (currentBG === COLOR_BG || currentBG === COLOR_GRAY) ? COLOR_TEXT : COLOR_WHITE;
+                
+                if (minutes < 1 && Math.floor(Date.now() / 500) % 2 === 0) {
+                    textColor = COLOR_RED;
+                }
+
+                ctx.font = "bold 20px monospace";
+                ctx.fillStyle = textColor;
+                ctx.fillText(timeStr, 20, 40);
+
+                let statusStr = "";
+                if (this.state === STATE_CLASSIC) {
+                    statusStr = `Kaktüs Geç: ${this.classicPassedCount}/${this.neededClassicJumps}`;
+                } else if (this.state === STATE_WIFI_BOMB) {
+                    statusStr = `Bombadan Kaç: ${this.bombsDodged}/${this.neededBombDodges}`;
+                } else if (this.state === STATE_PUZZLE) {
+                    statusStr = "Ameleliği bitir: Aynı Renkleri Birleştir!";
+                } else if (this.state === STATE_HELICOPTER) {
+                    statusStr = "IŞINLANMA AKTİF: Direkt helikoptere dokun!";
+                } else if (this.state === STATE_MARS_TRAVEL) {
+                    statusStr = `Mars Yolculuğu: ${Math.floor((this.marsTravelDistance / this.neededMarsDistance) * 100)}% - Göktaşlarından Kaç!`;
+                } else if (this.state === STATE_MARS_BATTLE) {
+                    statusStr = `Marslıları Temizle: ${this.martiansDefeated}/${this.neededMartianKills}`;
+                } else if (this.state === STATE_MOON_SURFACE) {
+                    statusStr = `AY İŞGALİ! Siyah Sürüngenleri Vur: ${this.crawlersDefeated}/${this.neededCrawlerKills}`;
+                }
+
+                ctx.font = "bold 16px monospace";
+                ctx.fillText(statusStr, 20, 75);
+            }
+
+            getBGColor() {
+                if (this.state === STATE_PUZZLE || this.state === STATE_VICTORY) return COLOR_DARK_BG;
+                if (this.state === STATE_MARS_TRAVEL) return COLOR_SPACE_BG;
+                if (this.state === STATE_MARS_BATTLE || this.state === STATE_MARS_KING) return COLOR_MARS_BG;
+                if (this.state === STATE_MOON_SURFACE) return COLOR_MOON_BG;
+                return COLOR_BG;
+            }
+
+            // --- GÜNCELLEME ---
+            update() {
+                if (this.isPaused) return;
+
+                this.updateTimer();
+                this.updateMobileControlsVisibility();
+                
+                this.dinoFrameTimer++;
+                if (this.dinoFrameTimer >= 6) {
+                    this.dinoFrame = 1 - this.dinoFrame;
+                    this.dinoFrameTimer = 0;
+                }
+
+                switch(this.state) {
+                    case STATE_CLASSIC:
+                        this.updateClassicMode();
+                        break;
+                    case STATE_WIFI_BOMB:
+                        this.updateWifiBombMode();
+                        break;
+                    case STATE_PUZZLE:
+                        if (this.connections.length === 3) {
+                            this.state = STATE_HELICOPTER;
+                            this.dinoX = 800 / 2 - 100;
+                            this.dinoY = 100;
+                            this.spaceshipX = 800 / 2 - 30;
+                            this.spaceshipY = 80;
+                            this.dinoFallingFromShip = true;
+                        }
+                        break;
+                    case STATE_HELICOPTER:
+                        this.updateHelicopterMode();
+                        break;
+                    case STATE_MARS_TRAVEL:
+                        this.updateMarsTravelMode();
+                        break;
+                    case STATE_MARS_BATTLE:
+                        this.updateMarsBattleMode();
+                        break;
+                    case STATE_MOON_SURFACE:
+                        this.updateMoonSurfaceMode();
+                        break;
+                }
+            }
+
+            updateClassicMode() {
+                this.dinoVelY += this.gravity;
+                this.dinoY += this.dinoVelY;
+                if (this.dinoY >= 350) {
+                    this.dinoY = 350;
+                    this.dinoVelY = 0;
+                    this.isJumping = false;
+                }
+
+                this.cactusSpawnTimer++;
+                if (this.cactusSpawnTimer > Math.floor(Math.random() * 50) + 70) {
+                    this.cacti.push({ x: 800 + 50, y: 350, width: 30, height: 40 });
+                    this.cactusSpawnTimer = 0;
+                }
+
+                for (let i = this.cacti.length - 1; i >= 0; i--) {
+                    const cactus = this.cacti[i];
+                    cactus.x -= this.gameSpeed;
+                    
+                    if (cactus.x < -50) {
+                        this.cacti.splice(i, 1);
+                        this.classicPassedCount++;
+                        continue;
+                    }
+
+                    const dinoRect = { x: this.dinoX + 5, y: this.dinoY, width: this.dinoWidth - 10, height: this.dinoHeight };
+                    if (this.rectsIntersect(dinoRect, cactus)) {
+                        this.triggerGameOver();
+                    }
+                }
+
+                if (this.classicPassedCount >= this.neededClassicJumps) {
+                    this.dinoX = 400;
+                    this.dinoY = 450;
+                    this.state = STATE_WIFI_BOMB;
+                }
+            }
+
+            updateWifiBombMode() {
+                this.pulseCounter++;
+
+                let moveLeft = keys['ArrowLeft'] || keys['a'] || this.mobileLeftPressed;
+                let moveRight = keys['ArrowRight'] || keys['d'] || this.mobileRightPressed;
+
+                if (!isTouchDevice && mouseX > 0 && mouseX < 800) {
+                    const targetX = mouseX - this.dinoWidth / 2;
+                    this.dinoX += (targetX - this.dinoX) * 0.15;
+                } else {
+                    if (moveLeft) this.dinoX -= this.dinoSpeed;
+                    if (moveRight) this.dinoX += this.dinoSpeed;
+                }
+
+                this.dinoX = Math.max(10, Math.min(this.dinoX, 800 - this.dinoWidth - 10));
+
+                this.bombSpawnTimer++;
+                if (this.bombSpawnTimer > 25) {
+                    const bx = Math.random() * (800 - 100) + 50;
+                    this.bombs.push({ x: bx, y: -40, width: 30, height: 30 });
+                    this.bombSpawnTimer = 0;
+                }
+
+                for (let i = this.bombs.length - 1; i >= 0; i--) {
+                    const bomb = this.bombs[i];
+                    bomb.y += 5;
+
+                    if (bomb.y > 600) {
+                        this.bombs.splice(i, 1);
+                        this.bombsDodged++;
+                        continue;
+                    }
+
+                    const dinoRect = { x: this.dinoX, y: this.dinoY, width: this.dinoWidth, height: this.dinoHeight };
+                    if (this.rectsIntersect(dinoRect, bomb)) {
+                        this.triggerGameOver();
+                    }
+                }
+
+                if (this.bombsDodged >= this.neededBombDodges) {
+                    this.spaceshipReady = true;
+                }
+
+                if (this.spaceshipReady) {
+                    if (this.spaceshipX > (800 / 2) - 30) {
+                        this.spaceshipX -= 3;
+                    }
+                }
+            }
+
+            updateHelicopterMode() {
+                this.heliFrame++;
+                if (this.heliX > 800 / 2 + 100) {
+                    this.heliX -= 4;
+                }
+
+                if (this.dinoFallingFromShip) {
+                    this.dinoY += 4;
+                    if (this.dinoY >= 450) {
+                        this.dinoY = 450;
+                        this.dinoFallingFromShip = false;
+                    }
+                }
+            }
+
+            updateMarsTravelMode() {
+                this.heliFrame++;
+                this.marsTravelDistance++;
+
+                let flyUp = keys['ArrowUp'] || keys['w'] || keys[' '] || this.mobileLeftPressed;
+                let flyDown = keys['ArrowDown'] || keys['s'] || this.mobileRightPressed;
+
+                if (!isTouchDevice && mouseY > 0 && mouseY < 600) {
+                    const targetY = mouseY - 20;
+                    this.dinoY += (targetY - this.dinoY) * 0.1;
+                } else {
+                    if (flyUp) this.dinoY -= 6;
+                    if (flyDown) this.dinoY += 6;
+                }
+
+                this.dinoY = Math.max(50, Math.min(this.dinoY, 600 - 100));
+
+                if (Math.floor(Math.random() * 30) === 1) {
+                    const oy = Math.random() * (600 - 150) + 50;
+                    this.spaceObstacles.push({ x: 800 + 50, y: oy, width: 25, height: 25 });
+                }
+
+                for (let i = this.spaceObstacles.length - 1; i >= 0; i--) {
+                    const obs = this.spaceObstacles[i];
+                    obs.x -= 8;
+
+                    if (obs.x < -50) {
+                        this.spaceObstacles.splice(i, 1);
+                        continue;
+                    }
+
+                    const dinoHeliRect = { x: this.dinoX, y: this.dinoY, width: 60, height: 40 };
+                    if (this.rectsIntersect(dinoHeliRect, obs)) {
+                        this.triggerGameOver();
+                    }
+                }
+
+                if (this.marsTravelDistance >= this.neededMarsDistance) {
+                    this.state = STATE_MARS_BATTLE;
+                    this.dinoX = 100;
+                    this.dinoY = 450;
+                    this.projectiles = [];
+                    this.martians = [];
+                }
+            }
+
+            updateMarsBattleMode() {
+                this.heliFrame++;
+
+                let moveLeft = keys['ArrowLeft'] || keys['a'] || this.mobileLeftPressed;
+                let moveRight = keys['ArrowRight'] || keys['d'] || this.mobileRightPressed;
+
+                if (!isTouchDevice && mouseX > 0 && mouseX < 800) {
+                    this.dinoX += (mouseX - this.dinoX) * 0.15;
+                } else {
+                    if (moveLeft) this.dinoX -= 5;
+                    if (moveRight) this.dinoX += 5;
+                }
+                this.dinoX = Math.max(10, Math.min(this.dinoX, 800 / 2));
+
+                for (let i = this.projectiles.length - 1; i >= 0; i--) {
+                    const proj = this.projectiles[i];
+                    proj.x += proj.vx;
+                    if (proj.x > 800) {
+                        this.projectiles.splice(i, 1);
+                    }
+                }
+
+                if (Math.floor(Math.random() * 40) === 1 && this.martians.length < 4) {
+                    this.martians.push({ x: 800 + 50, y: 440, width: 40, height: 50 });
+                }
+
+                for (let i = this.martians.length - 1; i >= 0; i--) {
+                    const martian = this.martians[i];
+                    martian.x -= 4;
+
+                    if (martian.x < -50) {
+                        this.martians.splice(i, 1);
+                        continue;
+                    }
+
+                    const dinoRect = { x: this.dinoX, y: this.dinoY, width: this.dinoWidth, height: this.dinoHeight };
+                    if (this.rectsIntersect(dinoRect, martian)) {
+                        this.triggerGameOver();
+                    }
+
+                    for (let j = this.projectiles.length - 1; j >= 0; j--) {
+                        const proj = this.projectiles[j];
+                        if (this.rectsIntersect(proj, martian)) {
+                            this.projectiles.splice(j, 1);
+                            this.martians.splice(i, 1);
+                            snd.playExplosion();
+                            this.martiansDefeated++;
+                            break;
+                        }
+                    }
+                }
+
+                if (this.martiansDefeated >= this.neededMartianKills) {
+                    this.state = STATE_MARS_KING;
+                }
+            }
+
+            updateMoonSurfaceMode() {
+                this.heliFrame++;
+
+                let moveLeft = keys['ArrowLeft'] || keys['a'] || this.mobileLeftPressed;
+                let moveRight = keys['ArrowRight'] || keys['d'] || this.mobileRightPressed;
+
+                if (!isTouchDevice && mouseX > 0 && mouseX < 800) {
+                    this.dinoX += (mouseX - this.dinoX) * 0.15;
+                } else {
+                    if (moveLeft) this.dinoX -= 6;
+                    if (moveRight) this.dinoX += 6;
+                }
+                this.dinoX = Math.max(120, Math.min(this.dinoX, 800 / 2));
+
+                for (let i = this.projectiles.length - 1; i >= 0; i--) {
+                    const proj = this.projectiles[i];
+                    proj.x += proj.vx;
+                    if (proj.x > 800) {
+                        this.projectiles.splice(i, 1);
+                    }
+                }
+
+                if (Math.floor(Math.random() * 35) === 1 && this.crawlers.length < 5) {
+                    this.crawlers.push({ x: 800 + 50, y: 445, width: 45, height: 35 });
+                }
+
+                for (let i = this.crawlers.length - 1; i >= 0; i--) {
+                    const crawler = this.crawlers[i];
+                    crawler.x -= 5;
+
+                    if (crawler.x < -50) {
+                        this.crawlers.splice(i, 1);
+                        continue;
+                    }
+
+                    const dinoRect = { x: this.dinoX, y: this.dinoY, width: this.dinoWidth, height: this.dinoHeight };
+                    if (this.rectsIntersect(dinoRect, crawler)) {
+                        this.triggerGameOver();
+                    }
+
+                    for (let j = this.projectiles.length - 1; j >= 0; j--) {
+                        const proj = this.projectiles[j];
+                        if (this.rectsIntersect(proj, crawler)) {
+                            this.projectiles.splice(j, 1);
+                            this.crawlers.splice(i, 1);
+                            snd.playExplosion();
+                            this.crawlersDefeated++;
+                            break;
+                        }
+                    }
+                }
+
+                if (this.crawlersDefeated >= this.neededCrawlerKills) {
+                    this.state = STATE_VICTORY;
+                    snd.stopMusic();
+                }
+            }
+
+            rectsIntersect(r1, r2) {
+                return !(r2.x > r1.x + r1.width || 
+                         r2.x + r2.width < r1.x || 
+                         r2.y > r1.y + r1.height ||
+                         r2.y + r2.height < r1.y);
+            }
+
+            // --- SAHNE ÇİZİMLERİ ---
+            draw() {
+                ctx.clearRect(0, 0, 800, 600);
+
+                ctx.fillStyle = this.getBGColor();
+                ctx.fillRect(0, 0, 800, 600);
+
+                switch (this.state) {
+                    case STATE_MENU:
+                        this.drawMenu();
+                        break;
+                    case STATE_CLASSIC:
+                        this.drawClassicStage();
+                        break;
+                    case STATE_WIFI_BOMB:
+                        this.drawWifiBombStage();
+                        break;
+                    case STATE_PUZZLE:
+                        this.drawPuzzleStage();
+                        break;
+                    case STATE_HELICOPTER:
+                        this.drawHelicopterStage();
+                        break;
+                    case STATE_MARS_TRAVEL:
+                        this.drawMarsTravelStage();
+                        break;
+                    case STATE_MARS_BATTLE:
+                        this.drawMarsBattleStage();
+                        break;
+                    case STATE_MARS_KING:
+                        this.drawMarsKingStage();
+                        break;
+                    case STATE_MOON_SURFACE:
+                        this.drawMoonSurfaceStage();
+                        break;
+                    case STATE_VICTORY:
+                        this.drawVictoryStage();
+                        break;
+                    case STATE_GAME_OVER:
+                        this.drawGameOverStage();
+                        break;
+                }
+
+                const gameStates = [
+                    STATE_CLASSIC, STATE_WIFI_BOMB, STATE_PUZZLE, 
+                    STATE_HELICOPTER, STATE_MARS_TRAVEL, STATE_MARS_BATTLE, 
+                    STATE_MOON_SURFACE
+                ];
+                if (gameStates.includes(this.state)) {
+                    if (!this.isPaused) {
+                        ctx.fillStyle = (this.getBGColor() === COLOR_BG) ? COLOR_TEXT : COLOR_WHITE;
+                        ctx.fillRect(this.pauseIconRect.x, this.pauseIconRect.y, 8, 30);
+                        ctx.fillRect(this.pauseIconRect.x + 16, this.pauseIconRect.y, 8, 30);
+                    } else {
+                        ctx.fillStyle = "rgba(0,0,0,0.85)";
+                        ctx.fillRect(0, 0, 800, 600);
+                        
+                        ctx.fillStyle = COLOR_DARK_GRAY;
+                        ctx.beginPath();
+                        ctx.roundRect(this.resumeBtnRect.x, this.resumeBtnRect.y, this.resumeBtnRect.width, this.resumeBtnRect.height, 10);
+                        ctx.fill();
+
+                        ctx.font = "bold 22px monospace";
+                        ctx.fillStyle = COLOR_WHITE;
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText("DEVAM ET", this.resumeBtnRect.x + this.resumeBtnRect.width/2, this.resumeBtnRect.y + this.resumeBtnRect.height/2);
+                    }
+                }
+            }
+
+            drawMenu() {
+                ctx.fillStyle = COLOR_TEXT;
+                ctx.textAlign = "center";
+                ctx.font = "bold 36px monospace";
+                ctx.fillText("DİNO: MARS'IN KRALİ", 400, 100);
+
+                ctx.fillStyle = COLOR_RED;
+                ctx.font = "bold 22px monospace";
+                ctx.fillText("DÜNYADAN KAÇIŞ VE AY OPERASYONU!", 400, 160);
+
+                ctx.fillStyle = COLOR_TEXT;
+                ctx.font = "bold 16px monospace";
+                ctx.fillText("Kaktüsler, bombalar, helikopterler ve Ay'daki sinsi yaratıklar.", 400, 330);
+
+                ctx.fillStyle = COLOR_BLUE;
+                ctx.font = "bold 22px monospace";
+                ctx.fillText("[ BAŞLAMAK İÇİN BURAYA DOKUNUN ]", 400, 450);
+
+                this.drawDino(400 - 22, 240);
+            }
+
+            drawClassicStage() {
+                ctx.strokeStyle = COLOR_TEXT;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, 390);
+                ctx.lineTo(800, 390);
+                ctx.stroke();
+
+                this.drawDino(this.dinoX, this.dinoY, this.dinoFrame, this.isJumping);
+                for (const cactus of this.cacti) {
+                    this.drawCactus(cactus.x, cactus.y);
+                }
+                this.drawHUD();
+            }
+
+            drawWifiBombStage() {
+                ctx.strokeStyle = COLOR_TEXT;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, 490);
+                ctx.lineTo(800, 490);
+                ctx.stroke();
+
+                this.drawDino(this.dinoX, this.dinoY, this.dinoFrame, false);
+                for (const bomb of this.bombs) {
+                    this.drawWifiBomb(bomb.x, bomb.y, this.pulseCounter);
+                }
+
+                if (this.spaceshipReady) {
+                    this.spaceshipHover++;
+                    this.drawSpaceship(this.spaceshipX, this.spaceshipY, this.spaceshipHover);
+                    if (Math.floor(Date.now() / 600) % 2 === 0) {
+                        ctx.fillStyle = COLOR_GREEN;
+                        ctx.font = "bold 16px monospace";
+                        ctx.textAlign = "center";
+                        ctx.fillText("GEMİYE DOKUN VE BİN!", this.spaceshipX + 30, this.spaceshipY - 20);
+                    }
+                }
+                this.drawHUD();
+            }
+
+            drawPuzzleStage() {
+                ctx.fillStyle = COLOR_WHITE;
+                ctx.textAlign = "center";
+                ctx.font = "bold 36px monospace";
+                ctx.fillText("KONTROL PANELİ", 400, 60);
+
+                ctx.fillStyle = COLOR_YELLOW;
+                ctx.font = "bold 16px monospace";
+                ctx.fillText("Panellere sırayla dokunarak aynı renkleri birbirine bağla!", 400, 100);
+
+                for (const [node1, node2] of this.connections) {
+                    ctx.strokeStyle = node1.color;
+                    ctx.lineWidth = 8;
+                    ctx.beginPath();
+                    ctx.moveTo(node1.x + 20, node1.y + 20);
+                    ctx.lineTo(node2.x + 20, node2.y + 20);
+                    ctx.stroke();
+                }
+
+                if (this.selectedNode) {
+                    ctx.strokeStyle = this.selectedNode.color;
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(this.selectedNode.x + 20, this.selectedNode.y + 20);
+                    ctx.lineTo(mouseX, mouseY);
+                    ctx.stroke();
+                }
+
+                for (const node of this.puzzleNodes) {
+                    const border_color = node.isActive ? COLOR_WHITE : "#646464";
+                    ctx.fillStyle = border_color;
+                    ctx.fillRect(node.x, node.y, 40, 40);
+                    ctx.fillStyle = node.color;
+                    ctx.fillRect(node.x + 6, node.y + 6, 28, 28);
+                }
+
+                ctx.fillStyle = "#323246";
+                ctx.beginPath();
+                ctx.roundRect(400 - 80, 200, 160, 180, 15);
+                ctx.fill();
+
+                const statusColor = (this.connections.length < 3) ? COLOR_RED : COLOR_GREEN;
+                const statusText = (this.connections.length < 3) ? "SİSTEM: GÜÇSÜZ" : "SİSTEM: HAZIR";
+                ctx.fillStyle = statusColor;
+                ctx.font = "bold 18px monospace";
+                ctx.fillText(statusText, 400, 290);
+                this.drawHUD();
+            }
+
+            drawHelicopterStage() {
+                ctx.strokeStyle = COLOR_TEXT;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, 490);
+                ctx.lineTo(800, 490);
+                ctx.stroke();
+
+                this.drawSpaceship(this.spaceshipX, this.spaceshipY, this.heliFrame);
+                this.drawHelicopter(this.heliX, this.heliY, this.heliFrame);
+                this.drawDino(this.dinoX, this.dinoY, this.dinoFrame, false);
+                this.drawHUD();
+            }
+
+            drawMarsTravelStage() {
+                ctx.fillStyle = COLOR_WHITE;
+                for (let i = 0; i < 15; i++) {
+                    const sx = (i * 9991) % 800;
+                    const sy = ((i * 323) + this.marsTravelDistance * 2) % 600;
+                    ctx.fillRect(sx, sy, 2, 2);
+                }
+
+                this.drawHelicopter(this.dinoX, this.dinoY, this.heliFrame);
+                this.drawDino(this.dinoX + 5, this.dinoY - 5, this.dinoFrame, false);
+                
+                ctx.fillStyle = COLOR_GRAY;
+                for (const obs of this.spaceObstacles) {
+                    ctx.beginPath();
+                    ctx.arc(obs.x + 12, obs.y + 12, 12, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                this.drawHUD();
+            }
+
+            drawMarsBattleStage() {
+                ctx.strokeStyle = COLOR_WHITE;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, 490);
+                ctx.lineTo(800, 490);
+                ctx.stroke();
+
+                this.drawDino(this.dinoX, this.dinoY, this.dinoFrame, false);
+
+                ctx.strokeStyle = COLOR_YELLOW;
+                ctx.lineWidth = 4;
+                for (const proj of this.projectiles) {
+                    ctx.beginPath();
+                    ctx.moveTo(proj.x, proj.y);
+                    ctx.lineTo(proj.x + 15, proj.y);
+                    ctx.stroke();
+                }
+
+                for (const martian of this.martians) {
+                    this.drawMartian(martian.x, martian.y, this.heliFrame);
+                }
+                this.drawHUD();
+            }
+
+            drawMarsKingStage() {
+                ctx.fillStyle = COLOR_YELLOW;
+                ctx.beginPath();
+                ctx.roundRect(400 - 40, 380, 80, 110, 5);
+                ctx.fill();
+
+                this.drawDino(400 - 22, 360, 0, false);
+                this.drawCrown(400 - 25, 335);
+
+                ctx.textAlign = "center";
+                ctx.fillStyle = COLOR_YELLOW;
+                ctx.font = "bold 32px monospace";
+                ctx.fillText("MARS'IN TEK HAKİMİ: DİNO KRAL!", 400, 80);
+
+                ctx.fillStyle = COLOR_RED;
+                ctx.font = "bold 18px monospace";
+                ctx.fillText("DİKKAT! Başka evrenden gelen uzaylılar Mars'ı işgal etti!", 400, 160);
+
+                ctx.fillStyle = COLOR_WHITE;
+                ctx.font = "bold 14px monospace";
+                ctx.fillText("[ 2 MARSLI DOSTUNLA AY'A KAÇMAK İÇİN EKRANA DOKUNUN! ]", 400, 240);
+            }
+
+            drawMoonSurfaceStage() {
+                ctx.fillStyle = COLOR_MOON_GROUND;
+                ctx.fillRect(0, 490, 800, 110);
+
+                ctx.strokeStyle = COLOR_WHITE;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, 490);
+                ctx.lineTo(800, 490);
+                ctx.stroke();
+
+                this.drawMartian(this.dinoX - 60, this.marsAlliesY, this.heliFrame);
+                this.drawMartian(this.dinoX - 110, this.marsAlliesY, this.heliFrame + 10);
+
+                this.drawDino(this.dinoX, this.dinoY, this.dinoFrame, false);
+                ctx.fillStyle = COLOR_RED;
+                ctx.fillRect(this.dinoX + this.dinoWidth - 5, this.dinoY + 15, 15, 6);
+
+                ctx.strokeStyle = COLOR_GREEN;
+                ctx.lineWidth = 4;
+                for (const proj of this.projectiles) {
+                    ctx.beginPath();
+                    ctx.moveTo(proj.x, proj.y);
+                    ctx.lineTo(proj.x + 15, proj.y);
+                    ctx.stroke();
+                }
+
+                for (const crawler of this.crawlers) {
+                    this.drawCreepyCrawler(crawler.x, crawler.y, this.heliFrame);
+                }
+                this.drawHUD();
+            }
+
+            drawVictoryStage() {
+                ctx.textAlign = "center";
+                ctx.fillStyle = COLOR_GREEN;
+                ctx.font = "bold 36px monospace";
+                ctx.fillText("NİHAİ ZAFER! AY TEMİZLENDİ", 400, 150);
+
+                ctx.fillStyle = COLOR_WHITE;
+                ctx.font = "bold 18px monospace";
+                ctx.fillText("Sadık iki Marslınla birlikte Ay'ı simsiyah yaratıklardan kurtardın!", 400, 250);
+
+                ctx.fillStyle = COLOR_BLUE;
+                ctx.font = "bold 16px monospace";
+                ctx.fillText("[ EN BAŞTAN BAŞLAMAK İÇİN BURAYA DOKUNUN ]", 400, 400);
+            }
+
+            drawGameOverStage() {
+                ctx.textAlign = "center";
+                ctx.fillStyle = COLOR_RED;
+                ctx.font = "bold 44px monospace";
+                ctx.fillText("OYUN BİTTİ", 400, 150);
+
+                ctx.fillStyle = COLOR_TEXT;
+                ctx.font = "bold 22px monospace";
+                ctx.fillText("Yaratıklar veya engeller seni alt etti!", 400, 250);
+
+                ctx.fillStyle = COLOR_BLUE;
+                ctx.font = "bold 18px monospace";
+                ctx.fillText("[ BAŞTAN BAŞLAMAK İÇİN BURAYA DOKUNUN ]", 400, 400);
+            }
+
+            // --- TIKLAMA / DOKUNMA OLAYLARI ---
+            handleInteraction(clickX, clickY) {
+                if (this.isPaused) {
+                    if (clickX >= this.resumeBtnRect.x && clickX <= this.resumeBtnRect.x + this.resumeBtnRect.width &&
+                        clickY >= this.resumeBtnRect.y && clickY <= this.resumeBtnRect.y + this.resumeBtnRect.height) {
+                        this.isPaused = false;
+                        this.startTicks += (Date.now() - this.pauseStartTicks);
+                        snd.startMusic();
+                    }
+                    return;
+                }
+
+                const gameStates = [
+                    STATE_CLASSIC, STATE_WIFI_BOMB, STATE_PUZZLE, 
+                    STATE_HELICOPTER, STATE_MARS_TRAVEL, STATE_MARS_BATTLE, 
+                    STATE_MOON_SURFACE
+                ];
+                if (gameStates.includes(this.state)) {
+                    if (clickX >= this.pauseIconRect.x && clickX <= this.pauseIconRect.x + this.pauseIconRect.width &&
+                        clickY >= this.pauseIconRect.y && clickY <= this.pauseIconRect.y + this.pauseIconRect.height) {
+                        this.isPaused = true;
+                        this.pauseStartTicks = Date.now();
+                        snd.stopMusic();
+                        return;
+                    }
+                }
+
+                switch (this.state) {
+                    case STATE_MENU:
+                        snd.init();
+                        snd.startMusic();
+                        this.resetGameStates();
+                        this.state = STATE_CLASSIC;
+                        break;
+                    
+                    case STATE_GAME_OVER:
+                    case STATE_VICTORY:
+                        this.state = STATE_MENU;
+                        break;
+
+                    case STATE_CLASSIC:
+                        if (!this.isJumping) {
+                            this.dinoVelY = this.jumpStrength;
+                            this.isJumping = true;
+                            snd.playJump();
+                        }
+                        break;
+
+                    case STATE_WIFI_BOMB:
+                        if (this.spaceshipReady && this.spaceshipX <= (800 / 2) - 30) {
+                            const shipRect = { x: this.spaceshipX - 10, y: this.spaceshipY - 10, width: 80, height: 50 };
+                            if (clickX >= shipRect.x && clickX <= shipRect.x + shipRect.width &&
+                                clickY >= shipRect.y && clickY <= shipRect.y + shipRect.height) {
+                                if (Math.abs((this.dinoX + this.dinoWidth/2) - (this.spaceshipX + 30)) < 120) {
+                                    this.state = STATE_PUZZLE;
+                                }
+                            }
+                        }
+                        break;
+
+                    case STATE_PUZZLE:
+                        for (const node of this.puzzleNodes) {
+                            if (clickX >= node.x && clickX <= node.x + node.width &&
+                                clickY >= node.y && clickY <= node.y + node.height) {
+                                if (this.selectedNode === null) {
+                                    this.selectedNode = node;
+                                } else {
+                                    if (node !== this.selectedNode && node.color === this.selectedNode.color) {
+                                        const alreadyConnected = this.connections.some(conn => 
+                                            (conn[0] === node && conn[1] === this.selectedNode) ||
+                                            (conn[0] === this.selectedNode && conn[1] === node)
+                                        );
+                                        if (!alreadyConnected) {
+                                            this.connections.push([this.selectedNode, node]);
+                                            node.isActive = true;
+                                            this.selectedNode.isActive = true;
+                                        }
+                                    }
+                                    this.selectedNode = null;
+                                }
+                                break;
+                            }
+                        }
+                        break;
+
+                    case STATE_HELICOPTER:
+                        const heliRect = { x: this.heliX - 30, y: this.heliY - 20, width: 110, height: 70 };
+                        if (clickX >= heliRect.x && clickX <= heliRect.x + heliRect.width &&
+                            clickY >= heliRect.y && clickY <= heliRect.y + heliRect.height) {
+                            this.state = STATE_MARS_TRAVEL;
+                            this.dinoX = 800 / 4;
+                            this.dinoY = 600 / 2;
+                            this.spaceObstacles = [];
+                        }
+                        break;
+
+                    case STATE_MARS_BATTLE:
+                    case STATE_MOON_SURFACE:
+                        snd.playLaser();
+                        this.projectiles.push({
+                            x: this.dinoX + this.dinoWidth,
+                            y: this.dinoY + 15,
+                            vx: 14,
+                            width: 10,
+                            height: 5
+                        });
+                        break;
+
+                    case STATE_MARS_KING:
+                        this.state = STATE_MOON_SURFACE;
+                        this.dinoX = 150;
+                        this.dinoY = 440;
+                        this.projectiles = [];
+                        this.crawlers = [];
+                        break;
+                }
+            }
+        }
+
+        const game = new Game();
+
+        // --- OLAY DİNLEYİCİLERİ ---
+        function getCanvasCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            return {
+                x: ((clientX - rect.left) / rect.width) * 800,
+                y: ((clientY - rect.top) / rect.height) * 600
+            };
+        }
+
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault();
+                game.handleInteraction(game.dinoX + 20, game.dinoY + 20);
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const coords = getCanvasCoordinates(e);
+            mouseX = coords.x;
+            mouseY = coords.y;
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const coords = getCanvasCoordinates(e);
+            game.handleInteraction(coords.x, coords.y);
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            isTouchDevice = true;
+            const coords = getCanvasCoordinates(e);
+            game.handleInteraction(coords.x, coords.y);
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const coords = getCanvasCoordinates(e);
+            mouseX = coords.x;
+            mouseY = coords.y;
+        });
+
+        // Mobil Buton Bağlantıları
+        const btnLeft = document.getElementById('btn-left');
+        const btnRight = document.getElementById('btn-right');
+        const btnAction = document.getElementById('btn-action');
+
+        const setupMobileButton = (btn, pressHandler, releaseHandler) => {
+            btn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                pressHandler();
+            });
+            btn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                releaseHandler();
+            });
+            btn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                pressHandler();
+            });
+            btn.addEventListener('mouseup', (e) => {
+                e.preventDefault();
+                releaseHandler();
+            });
+        };
+
+        setupMobileButton(btnLeft, () => {
+            game.mobileLeftPressed = true;
+        }, () => {
+            game.mobileLeftPressed = false;
+        });
+
+        setupMobileButton(btnRight, () => {
+            game.mobileRightPressed = true;
+        }, () => {
+            game.mobileRightPressed = false;
+        });
+
+        setupMobileButton(btnAction, () => {
+            game.handleInteraction(game.dinoX + 20, game.dinoY + 20);
+        }, () => {});
+
+        // --- ANA OYUN DÖNGÜSÜ ---
+        function gameLoop() {
+            game.update();
+            game.draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.onload = function() {
+            gameLoop();
+        };
+    </script>
+</body>
+</html>
+
